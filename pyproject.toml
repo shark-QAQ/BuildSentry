@@ -1,0 +1,56 @@
+[project]
+name = "buildsentry"
+version = "0.1.0"
+description = "BuildSentry（工安智审）—— 基于大语言模型的智能施工安全合规审核系统"
+readme = "README.md"
+authors = [
+    { name = "shark-QAQ", email = "1350043201@qq.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "accelerate>=1.14.0",
+    "alembic>=1.14.0",
+    "bitsandbytes>=0.50.2",
+    "chromadb>=1.5.9",
+    "fastapi>=0.141.1",
+    "gradio>=6.26.0",
+    "peft>=0.20.0",
+    "psycopg2-binary>=2.9.12",
+    "pymupdf>=1.28.2",
+    "pypdf>=6.18.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=0.25.0",
+    "httpx>=0.28.0",
+    "python-docx>=1.2.0",
+    "python-multipart>=0.0.32",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "reportlab>=4.2.0",
+    "requests>=2.34.2",
+    "sentence-transformers>=6.0.1",
+    "sqlalchemy>=2.0.52",
+    "transformers>=5.16.1",
+    "uvicorn[standard]>=0.52.4",
+    "python-dotenv>=1.2.3",
+    "bcrypt==4.0.1",
+]
+
+[project.scripts]
+buildsentry = "buildsentry:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.7",
+]
+
+# 此处的索引覆盖了全局 uv 配置中的清华镜像。
+# 原因：清华镜像当前对 simple 索引直接返回 403，uv sync / uv run 会整体失败，
+# 且 uv.lock 中的下载地址均为 PyPI。若镜像恢复，删除本段即可恢复使用镜像。
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true

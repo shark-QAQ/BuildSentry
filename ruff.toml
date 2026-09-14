@@ -1,0 +1,61 @@
+# ruff.toml
+# Ruff 配置文件
+
+# 行长度
+line-length = 100
+
+# Python 版本
+target-version = "py314"
+
+# 排除目录
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "migrations",
+    "data",
+    "node_modules",
+]
+
+[lint]
+# 选择规则
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "S",   # flake8-bandit (security)
+    "T20", # flake8-print
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+
+# 忽略规则
+ignore = [
+    "E501",   # line too long (由 line-length 控制)
+    "B008",   # function call in default argument
+    "S101",   # assert used (测试文件需要)
+    "T201",   # print found (允许 print)
+    # 代码与文档大量使用中文，全角标点（，。：（））是有意为之，并非笔误
+    "RUF001", # 字符串中的易混淆 Unicode 字符
+    "RUF002", # 文档字符串中的易混淆 Unicode 字符
+    "RUF003", # 注释中的易混淆 Unicode 字符
+    "S311",   # 模拟推理使用非密码学随机数，符合预期
+    "S105",   # token_type = "bearer" 属于误报
+]
+
+# 测试文件允许更宽松的规则
+[lint.per-file-ignores]
+"tests/**/*.py" = ["S105", "S106", "B011"]
+
+# isort 配置
+[lint.isort]
+known-first-party = ["app"]
+
+# 格式化配置
+[format]
+quote-style = "double"
+indent-style = "space"

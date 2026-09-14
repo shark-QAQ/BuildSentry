@@ -1,0 +1,21 @@
+# training/configs/export_adapter.yaml
+#
+# 把训练好的 LoRA 适配器导出成推理侧可直接加载的形式。
+#
+# 用法（在 training/ 目录下，训练完成后）:
+#   llamafactory-cli export configs/export_adapter.yaml
+#
+# 导出后，把服务端 .env 的 LORA_PATH 指向 export_dir:
+#   LORA_PATH=/abs/path/to/BuildSentry/training/exports/buildsentry-8b-lora
+#
+# 推理侧 model_loader 会用 PeftModel.from_pretrained 加载并 merge_and_unload，
+# 因此这里不需要合并成完整权重——保留适配器即可，体积小得多。
+
+model_name_or_path: Qwen/Qwen3-8B
+adapter_name_or_path: saves/qwen3-8b-qlora
+template: qwen3_nothink  # 必须与训练配置一致
+finetuning_type: lora
+export_dir: exports/buildsentry-8b-lora
+export_size: 2
+export_device: cpu        # 导出不需要 GPU，避免和线上服务抢显存
+export_legacy_format: false

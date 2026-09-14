@@ -1,0 +1,33 @@
+# 运行时数据（隔离的文件夹）
+data/
+
+# Python 缓存
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# 环境变量（包含敏感信息）
+.env
+
+# 测试文件
+test.db
+.pytest_cache/
+
+# 覆盖率产物（CI 生成）
+.coverage
+coverage.xml
+htmlcov/
+
+# 训练侧：只提交配置与脚本，数据集和训练产物不入库
+training/.venv-train/
+training/venv/
+training/saves/
+training/exports/
+training/data/*.jsonl
+
+# 报告文件
+data/reports/

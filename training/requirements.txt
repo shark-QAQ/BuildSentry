@@ -1,0 +1,17 @@
+# training/requirements.txt
+#
+# 训练侧依赖，刻意与 app 的 pyproject.toml 隔离：
+# 这些包体积大、编译重，且只用于训练，不应该进入服务镜像。
+#
+# 安装（建议独立虚拟环境）:
+#   python -m venv .venv-train && . .venv-train/bin/activate
+#   pip install -r training/requirements.txt
+
+llamafactory>=0.9.0
+torch>=2.4.0
+transformers>=4.45.0
+peft>=0.13.0
+accelerate>=1.0.0
+bitsandbytes>=0.44.0          # QLoRA 4-bit 量化
+datasets>=3.0.0
+flash-attn>=2.6.0             # 可选，A6000 (sm86) 支持；装不上可去掉并在 yaml 里移除 flash_attn

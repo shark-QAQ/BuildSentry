@@ -1,0 +1,88 @@
+# ============================================
+# BuildSentry Docker Compose - 独立部署配置
+# ============================================
+
+services:
+  # ---- API 后端服务 ----
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: buildsentry-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - buildsentry-data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - ENVIRONMENT=production
+      - DEVICE=cpu
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+    networks:
+      - buildsentry-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/system/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---- Gradio 前端 ----
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: buildsentry-ui
+    restart: unless-stopped
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./.env:/app/.env:ro
+    environment:
+      - API_BASE=http://api:8000/api/v1
+    command: python ui/app.py
+    networks:
+      - buildsentry-net
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ---- 独立网络 ----
+networks:
+  buildsentry-net:
+    driver: bridge
+    name: buildsentry-network
+
+# ---- 数据卷 ----
+volumes:
+  buildsentry-data:
+    driver: local
+    name: buildsentry-data
