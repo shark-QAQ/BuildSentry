@@ -36,24 +36,18 @@ class TestAudit:
         response = client.get("/api/v1/audit/tasks/1/result", headers=headers)
         assert response.status_code in [400, 404]
 
-    def test_review_violation_invalid_status(self, client: TestClient, auditor_user_data):
+    def test_review_violation_invalid_status(self, client: TestClient, auditor_headers):
         """测试无效的复核状态"""
-        client.post("/api/v1/auth/register", json=auditor_user_data)
-        headers = get_auth_headers(
-            client, auditor_user_data["username"], auditor_user_data["password"]
-        )
+        headers = auditor_headers
 
         response = client.put(
             "/api/v1/audit/violations/1/review?review_status=invalid", headers=headers
         )
         assert response.status_code == 400
 
-    def test_review_violation_not_found(self, client: TestClient, auditor_user_data):
+    def test_review_violation_not_found(self, client: TestClient, auditor_headers):
         """测试复核不存在的违规项"""
-        client.post("/api/v1/auth/register", json=auditor_user_data)
-        headers = get_auth_headers(
-            client, auditor_user_data["username"], auditor_user_data["password"]
-        )
+        headers = auditor_headers
 
         response = client.put(
             "/api/v1/audit/violations/99999/review?review_status=confirmed", headers=headers
@@ -70,14 +64,9 @@ class TestAudit:
         )
         assert response.status_code == 403
 
-    def test_review_violation_records_trail(
-        self, client: TestClient, db_session, auditor_user_data
-    ):
+    def test_review_violation_records_trail(self, client: TestClient, db_session, auditor_headers):
         """复核必须留下可追溯的记录，而不只是改一个状态字段"""
-        client.post("/api/v1/auth/register", json=auditor_user_data)
-        headers = get_auth_headers(
-            client, auditor_user_data["username"], auditor_user_data["password"]
-        )
+        headers = auditor_headers
 
         doc = Document(file_name="trail.pdf")
         db_session.add(doc)
