@@ -150,8 +150,12 @@ llamafactory-cli export configs/export_adapter.yaml
 LORA_PATH=/abs/path/to/BuildSentry/training/exports/buildsentry-7b-lora
 ```
 
-重启服务。注意两点：
+重启服务。注意三点：
 
+- `LORA_PATH` 写错**不会**静默降级：指向不存在的目录会被判为配置错误，模型加载
+  失败并回退模拟模式（记 ERROR 日志，结果标记 `simulation-v1.0`），而不是悄悄改用
+  基座模型。接回后先确认日志里出现过 `加载 LoRA 适配器`——**没有这一行就说明微调
+  没生效**，审核结果会是 `base-v1.0`。
 - `model_loader` 是**懒加载**：首次审核请求才下载/加载基座模型（约 15GB），
   那个请求会等很久，而前端轮询 30 秒就超时。**部署后先手动预热一次。**
 - 若服务与训练同机，务必指定显卡。服务侧用 `.env` 的 `MODEL_GPU_INDEX`，训练侧用

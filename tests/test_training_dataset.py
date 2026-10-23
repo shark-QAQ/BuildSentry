@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 
-TRAINING_DIR = Path(__file__).resolve().parent.parent / "training"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TRAINING_DIR = REPO_ROOT / "training"
+APP_DIR = REPO_ROOT / "app"
 sys.path.insert(0, str(TRAINING_DIR))
 
 from generate_dataset import (  # noqa: E402
@@ -93,30 +95,43 @@ class TestToSharegpt:
 
 
 class TestTrainingPythonCompatibility:
-    """训练脚本的 Python 版本兼容性
+    """训练脚本及其依赖的 app 模块的 Python 版本兼容性
 
     服务侧跑在 Python 3.14，但训练环境通常是 3.11/3.12 ——
     LLaMA-Factory、torch、bitsandbytes、flash-attn 都还没跟上 3.14。
-    而训练脚本要 import app 的模块，所以它们本身必须能在 3.12 下解析。
+    而训练脚本要 import app 的模块，所以这些模块也必须能在 3.12 下解析。
 
-    这里用 ast 的 feature_version 卡住语法，避免将来又被自动格式化
-    成 3.14 才支持的写法（例如 ruff 在 target-version=py314 下会把
-    `except (A, B):` 的括号去掉，那是 PEP 758 语法，3.12 解析不了）。
+    这里用 ast 的 feature_version 卡住语法，避免引入 3.14 才支持的写法
+    （例如 PEP 758 的 `except A, B:`，不带括号，3.12 解析不了）。
+
+    app/ 一并纳入检查：此前只扫 training/*.py，于是
+    app/auth/dependencies.py 里的 `except TypeError, ValueError:` 长期没被发现 ——
+    而它一旦被训练脚本间接 import，整个训练环境就起不来。
     """
+
+    def _assert_parses_on_312(self, path: Path) -> None:
+        source = path.read_text(encoding="utf-8")
+        try:
+            ast.parse(source, filename=str(path), feature_version=(3, 12))
+        except SyntaxError as e:
+            pytest.fail(
+                f"{path.name} 无法在 Python 3.12 下解析: 第 {e.lineno} 行 {e.msg}\n"
+                "训练环境用不了 3.14，请改用 3.12 也支持的写法。"
+            )
 
     def test_training_scripts_parse_on_python312(self):
         scripts = sorted(TRAINING_DIR.glob("*.py"))
         assert scripts, "没有找到训练脚本"
 
         for script in scripts:
-            source = script.read_text(encoding="utf-8")
-            try:
-                ast.parse(source, filename=str(script), feature_version=(3, 12))
-            except SyntaxError as e:
-                pytest.fail(
-                    f"{script.name} 无法在 Python 3.12 下解析: 第 {e.lineno} 行 {e.msg}\n"
-                    "训练环境用不了 3.14，请改用 3.12 也支持的写法。"
-                )
+            self._assert_parses_on_312(script)
+
+    def test_app_modules_parse_on_python312(self):
+        modules = sorted(APP_DIR.rglob("*.py"))
+        assert modules, "没有找到 app 模块"
+
+        for module in modules:
+            self._assert_parses_on_312(module)
 
 
 class _StubTensor:
