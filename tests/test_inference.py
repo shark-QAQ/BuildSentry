@@ -13,12 +13,14 @@
 
 import asyncio
 import contextlib
+import logging
 
 import pytest
 
 from app.services.audit_contract import build_prompt
 from app.services.inference_service import (
     SOURCE_MODEL,
+    SOURCE_MODEL_BASE,
     SOURCE_MODEL_ERROR,
     SOURCE_SIMULATION,
     InferenceService,
@@ -112,14 +114,65 @@ class _FakeModel:
         return [_FakeTensor(PROMPT_LEN + MODEL_LEN)]
 
 
-def _use_model(monkeypatch, tokenizer, model=None):
-    """让 model_loader 表现为已加载模型"""
+def _use_model(monkeypatch, tokenizer, model=None, finetuned=True):
+    """让 model_loader 表现为已加载模型
+
+    finetuned 一并打桩：is_finetuned() 会穿透到真实加载器（_ensure_initialized），
+    在真有 GPU 的机器上会触发一次 7B 权重的加载，测试不能依赖那个。
+    """
     from app.services import model_loader as ml
 
     model = model or _FakeModel()
     monkeypatch.setattr(ml.model_loader, "is_ready", lambda: True)
     monkeypatch.setattr(ml.model_loader, "get_model", lambda: (model, tokenizer))
+    monkeypatch.setattr(ml.model_loader, "is_finetuned", lambda: finetuned)
     return model
+
+
+def _fake_model_deps(monkeypatch):
+    """伪造 transformers / peft，使 _load_model 在无权重、无 GPU 时也能跑完"""
+    import sys
+    import types
+
+    class _Recorder:
+        @staticmethod
+        def from_pretrained(name, **kwargs):
+            return object()
+
+    class _FakePeftModel:
+        def merge_and_unload(self):
+            return object()
+
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.AutoModelForCausalLM = _Recorder
+    fake_transformers.AutoTokenizer = _Recorder
+
+    fake_peft = types.ModuleType("peft")
+    fake_peft.PeftModel = type(
+        "PeftModel", (), {"from_pretrained": staticmethod(lambda model, path: _FakePeftModel())}
+    )
+
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setitem(sys.modules, "peft", fake_peft)
+
+
+def _load_on_fake_gpu(monkeypatch, lora_path):
+    """在伪造的 CUDA 环境下加载一次模型，返回 loader（未就绪时即回退模拟）"""
+    from app.core.config import settings
+
+    _fake_model_deps(monkeypatch)
+    monkeypatch.setattr(settings, "get_device", lambda: "cuda")
+    monkeypatch.setattr(settings, "MODEL_GPU_INDEX", "5")
+    monkeypatch.setattr(settings, "LORA_PATH", lora_path)
+
+    loader = ModelLoader()
+    monkeypatch.setattr(loader, "_initialized", False)
+    monkeypatch.setattr(loader, "_is_loaded", False)
+    monkeypatch.setattr(loader, "_adapter_loaded", False)
+
+    loader._load_model()
+    monkeypatch.setattr(loader, "_initialized", True)  # 下面直接查状态，不再触发加载
+    return loader
 
 
 class TestGeneration:
@@ -196,6 +249,28 @@ class TestProvenance:
         run(InferenceService.audit_paragraph("段落", []))
         assert model.generate_calls == 2  # max_retries=1 → 共 2 次尝试
 
+    def test_base_model_output_is_not_labeled_as_finetuned(self, monkeypatch):
+        """未挂 LoRA 时来源必须标为 model_base，不能冒充微调结果
+
+        回归测试：此前只区分"模型是否加载"，基座模型与微调模型的输出都落到
+        SOURCE_MODEL，model_version 于是同为 real-v1.0，报告里看不出微调
+        其实从未生效。
+        """
+        _use_model(monkeypatch, _GoodTokenizer(), finetuned=False)
+
+        violations, source = run(InferenceService.audit_paragraph("段落", []))
+
+        assert source == SOURCE_MODEL_BASE
+        assert len(violations) == 1  # 基座模型是真的在跑，不是模拟
+
+    def test_finetuned_model_keeps_model_source(self, monkeypatch):
+        """挂了 LoRA 时保持原来源标记，别把真实微调路径一并误伤"""
+        _use_model(monkeypatch, _GoodTokenizer(), finetuned=True)
+
+        _, source = run(InferenceService.audit_paragraph("段落", []))
+
+        assert source == SOURCE_MODEL
+
 
 class TestAggregateResults:
     """结果聚合测试"""
@@ -239,8 +314,10 @@ class TestAggregateResults:
         """model_version 必须反映真实来源，而不是模型是否加载"""
         cases = [
             ([SOURCE_MODEL], "real-v1.0"),
+            ([SOURCE_MODEL_BASE], "base-v1.0"),
             ([SOURCE_SIMULATION], "simulation-v1.0"),
             ([SOURCE_MODEL, SOURCE_SIMULATION], "mixed"),
+            ([SOURCE_MODEL, SOURCE_MODEL_BASE], "mixed"),
             ([SOURCE_MODEL, SOURCE_MODEL_ERROR], "mixed"),
             ([], "simulation-v1.0"),
         ]
@@ -520,3 +597,32 @@ class TestGpuSelection:
             loader.is_ready()
 
         assert loader._initialized is True
+
+    def test_missing_lora_path_is_not_silently_ignored(self, monkeypatch, caplog):
+        """LORA_PATH 配了却不存在：必须判为加载失败，而不是悄悄跑基座模型
+
+        回归测试：此前 `if lora_path and os.path.exists(lora_path)` 没有 else，
+        路径写错时既不报错也不打日志，服务照常返回审核结果，而报告里看不出
+        微调从未生效。现在按配置错误处理：加载失败 → 回退模拟模式（如实标记
+        simulation-v1.0，不会冒充 real），并留下 ERROR 日志。
+        """
+        with caplog.at_level(logging.ERROR):
+            loader = _load_on_fake_gpu(monkeypatch, "D:/definitely/not/here")
+
+        assert loader._is_loaded is False  # 未就绪 → 审核走模拟
+        assert loader.is_finetuned() is False
+        assert "LORA_PATH" in caplog.text  # 且留下可见痕迹
+
+    def test_existing_adapter_is_loaded_and_marked(self, monkeypatch, tmp_path):
+        """路径存在时必须真的挂上适配器，并标记为已微调"""
+        loader = _load_on_fake_gpu(monkeypatch, str(tmp_path))
+
+        assert loader._is_loaded is True
+        assert loader.is_finetuned() is True
+
+    def test_empty_lora_path_uses_base_model(self, monkeypatch):
+        """留空 LORA_PATH 是合法选择：用基座模型，但不算已微调"""
+        loader = _load_on_fake_gpu(monkeypatch, "")
+
+        assert loader._is_loaded is True
+        assert loader.is_finetuned() is False

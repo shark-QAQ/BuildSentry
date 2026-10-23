@@ -21,7 +21,8 @@ from app.services.model_loader import model_loader
 logger = get_logger("services.inference")
 
 # 违规项的来源标记
-SOURCE_MODEL = "model"  # 真实模型给出
+SOURCE_MODEL = "model"  # 微调模型给出（LoRA 适配器已挂载）
+SOURCE_MODEL_BASE = "model_base"  # 真模型给出，但未挂 LoRA——是基座模型
 SOURCE_SIMULATION = "simulation"  # 未加载模型，走模拟模式
 SOURCE_MODEL_ERROR = "model_error"  # 已加载模型但输出无法解析，重试后仍失败
 
@@ -37,8 +38,9 @@ class InferenceService:
     ) -> tuple[list[dict[str, Any]], str]:
         """审核单个段落，返回 (违规项列表, 来源)。
 
-        已加载模型时只可能返回 SOURCE_MODEL 或 SOURCE_MODEL_ERROR，
-        绝不回退到模拟——合规审核里用生成的假违规项冒充模型输出是不可接受的。
+        已加载模型时只可能返回 SOURCE_MODEL（含适配器）、SOURCE_MODEL_BASE
+        或 SOURCE_MODEL_ERROR，绝不回退到模拟——合规审核里用生成的假违规项
+        冒充模型输出是不可接受的。
         """
         if model_loader.is_ready():
             return await InferenceService._run_model(
@@ -77,7 +79,10 @@ class InferenceService:
                 # 生成是同步的 CPU/GPU 计算，直接 await 会阻塞整个事件循环，
                 # 期间该 worker 无法处理任何其他请求。
                 result_text = await asyncio.to_thread(_generate)
-                return parse_model_output(result_text), SOURCE_MODEL
+                # 来源必须在调用时就定下来：加载器只初始化一次，
+                # 事后无法再分辨这批输出出自适配器还是基座。
+                source = SOURCE_MODEL if model_loader.is_finetuned() else SOURCE_MODEL_BASE
+                return parse_model_output(result_text), source
             except Exception as e:
                 last_error = e
                 logger.warning(
@@ -164,6 +169,9 @@ class InferenceService:
             model_version = "simulation-v1.0"
         elif unique_sources == {SOURCE_MODEL}:
             model_version = "real-v1.0"
+        elif unique_sources == {SOURCE_MODEL_BASE}:
+            # 基座模型未经本任务微调，不能与 real 混为一谈
+            model_version = "base-v1.0"
         else:
             # 同时存在模型输出、模拟输出或解析失败
             model_version = "mixed"

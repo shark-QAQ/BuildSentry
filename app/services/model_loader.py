@@ -80,6 +80,9 @@ class ModelLoader:
             cls._instance._model = None
             cls._instance._tokenizer = None
             cls._instance._device = None
+            # 是否真的挂上了 LoRA 适配器。基座模型与本项目微调后的模型
+            # 必须能区分开，见 is_finetuned()。
+            cls._instance._adapter_loaded = False
         return cls._instance
 
     def _ensure_initialized(self) -> None:
@@ -98,6 +101,7 @@ class ModelLoader:
 
     def _load_model(self) -> None:
         self._device = settings.get_device()
+        self._adapter_loaded = False
 
         if self._device != "cuda":
             logger.info("未检测到 GPU，使用模拟推理模式（GPU 可用时自动切换）")
@@ -126,10 +130,25 @@ class ModelLoader:
                 trust_remote_code=True,
             )
 
-            if lora_path and os.path.exists(lora_path):
+            if lora_path:
+                # 配置了路径却不存在，是配置错误，必须显式失败。
+                # 此前这里只判 os.path.exists 就静默跳过，结果是基座模型照常
+                # 提供审核结果、报告里却看不出微调从未生效——对本项目而言这比
+                # 直接报错危险得多。抛出后由下方 except 记为 ERROR 并回退模拟模式，
+                # 溯源随之标为 simulation-v1.0，不会冒充真实结果。
+                if not os.path.exists(lora_path):
+                    raise RuntimeError(
+                        f"LORA_PATH 已配置但路径不存在: {lora_path}。"
+                        "请修正路径，或清空 LORA_PATH 以显式使用基座模型。"
+                    )
                 logger.info("加载 LoRA 适配器: %s", lora_path)
                 model = PeftModel.from_pretrained(model, lora_path)
                 model = model.merge_and_unload()
+                self._adapter_loaded = True
+            else:
+                # 未配置是合法选择（只想跑基座模型），但必须留下痕迹：
+                # 审核结果会标记为 base-v1.0 而不是 real-v1.0。
+                logger.warning("未配置 LORA_PATH，使用未经微调的基座模型 %s", base_model_name)
 
             self._model = model
             self._tokenizer = tokenizer
@@ -142,6 +161,16 @@ class ModelLoader:
     def is_ready(self) -> bool:
         self._ensure_initialized()
         return self._is_loaded and self._model is not None
+
+    def is_finetuned(self) -> bool:
+        """当前加载的是否为挂上 LoRA 适配器后的模型。
+
+        审核结果据此区分 real-v1.0 与 base-v1.0。基座模型没有经过本任务的
+        微调，把它标成 real 会让报告高估审核依据——这与"解析失败不得回退
+        模拟"是同一条原则：降级必须看得出来。
+        """
+        self._ensure_initialized()
+        return self._is_loaded and self._adapter_loaded
 
     def get_model(self) -> tuple[Any, Any]:
         self._ensure_initialized()
