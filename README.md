@@ -1,5 +1,7 @@
 # BuildSentry（工安智审）
 
+[![CI](https://github.com/shark-QAQ/BuildSentry/actions/workflows/ci.yml/badge.svg)](https://github.com/shark-QAQ/BuildSentry/actions/workflows/ci.yml)
+
 **把一份几十页的工程合规资料交给 32B 模型逐条审——目标是「零编造」。**
 
 不是"让模型更会答"，而是**在设计上让它没有机会编造**。
