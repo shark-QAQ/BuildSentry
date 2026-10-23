@@ -32,8 +32,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         raise credentials_exception
     try:
         user_id = int(sub)
-    except TypeError, ValueError:
+    # 刻意拆成两个 except，不用 `except (TypeError, ValueError):`：
+    # ruff 按 target-version=py314 格式化时会把它改写成 PEP 758 的
+    # `except TypeError, ValueError:`，那是 3.14 语法，而训练环境跑 3.12，
+    # 会直接 SyntaxError。拆开后两种写法都不触发该改写。
+    except ValueError:
         # 不链式抛出，避免把解析细节暴露给调用方
+        raise credentials_exception from None
+    except TypeError:
         raise credentials_exception from None
 
     user_repo = UserRepository(db)

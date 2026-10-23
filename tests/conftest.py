@@ -24,6 +24,13 @@ os.environ["ENVIRONMENT"] = "testing"
 # 写入 admin 账户；即使本地运行也会污染 data/buildsentry.db。
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(tempfile.mkdtemp()) / 'test.db'}"
 
+# 同理：向量库也必须指向临时目录。
+# vector_service 是模块级单例，导入 app 时就会按真实路径建集合；而这里把
+# ENVIRONMENT 设成了 testing，_seed_demo_data 的生产环境保护随之失效，
+# 于是每跑一次测试都会把那两条示例条文写进真实的 data/chroma_data ——
+# 它们会参与 RAG 检索、并经由数据生成流进训练集。
+os.environ["CHROMA_DATA_DIR"] = tempfile.mkdtemp()
+
 from app.core.database import Base, get_db
 from app.main import app
 
@@ -87,6 +94,11 @@ def db_session(setup_database):
         db.close()
 
 
+# 注意：这些夹具都不含 role。注册接口不接受 role（自助注册一律 viewer），
+# 带上它会被 extra="forbid" 判为 422。特权账号见下方 admin_headers /
+# auditor_headers。
+
+
 @pytest.fixture
 def test_user_data():
     """测试用户数据"""
@@ -95,7 +107,6 @@ def test_user_data():
         "email": "test@example.com",
         "password": "testpass123",
         "full_name": "测试用户",
-        "role": "viewer",
     }
 
 
@@ -107,7 +118,6 @@ def admin_user_data():
         "email": "admin@example.com",
         "password": "adminpass123",
         "full_name": "测试管理员",
-        "role": "admin",
     }
 
 
@@ -119,7 +129,6 @@ def auditor_user_data():
         "email": "auditor@example.com",
         "password": "auditorpass123",
         "full_name": "测试审核员",
-        "role": "auditor",
     }
 
 
@@ -130,3 +139,40 @@ def get_auth_headers(client: TestClient, username: str, password: str) -> dict:
         token = response.json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
     return {}
+
+
+def seed_user(db, data: dict, role: str):
+    """直接在测试库中建号（绕过注册接口）。
+
+    注册接口一律创建 viewer，特权角色只能由管理员创建。测试里没必要为了
+    造一个 admin 先登录另一个 admin，直接落库即可，语义等价于
+    「管理员已经建好了这个账号」。
+    """
+    from app.auth.security import get_password_hash
+    from app.models.db_models import User
+
+    user = User(
+        username=data["username"],
+        email=data["email"],
+        hashed_password=get_password_hash(data["password"]),
+        full_name=data.get("full_name"),
+        role=role,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@pytest.fixture
+def admin_headers(client, db_session, admin_user_data):
+    """管理员认证头"""
+    seed_user(db_session, admin_user_data, "admin")
+    return get_auth_headers(client, admin_user_data["username"], admin_user_data["password"])
+
+
+@pytest.fixture
+def auditor_headers(client, db_session, auditor_user_data):
+    """审核员认证头"""
+    seed_user(db_session, auditor_user_data, "auditor")
+    return get_auth_headers(client, auditor_user_data["username"], auditor_user_data["password"])

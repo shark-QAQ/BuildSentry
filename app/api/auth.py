@@ -12,7 +12,14 @@ from app.auth.security import create_access_token, get_password_hash, verify_pas
 from app.core.database import get_db
 from app.models.db_models import User
 from app.repositories.user_repo import UserRepository
-from app.schemas.auth import LoginRequest, PasswordChange, TokenResponse, UserCreate, UserResponse
+from app.schemas.auth import (
+    LoginRequest,
+    PasswordChange,
+    TokenResponse,
+    UserAdminCreate,
+    UserCreate,
+    UserResponse,
+)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
@@ -36,14 +43,16 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
             detail={"code": 40003, "message": "邮箱已被注册"},
         )
 
-    # 创建用户
+    # 角色固定为 viewer，绝不取自请求体：此前 role 由客户端指定，
+    # 任何人都能直接注册成 admin，使全部管理员鉴权形同虚设。
+    # 特权角色只能由管理员经 POST /users 创建。
     hashed_password = get_password_hash(user_data.password)
     user = user_repo.create(
         username=user_data.username,
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        role=user_data.role,
+        role="viewer",
     )
 
     return user
@@ -112,6 +121,40 @@ async def list_users(
     user_repo = UserRepository(db)
     users = user_repo.get_all(skip=skip, limit=limit)
     return users
+
+
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user_data: UserAdminCreate,
+    current_user: User = Depends(require_role(["admin"])),
+    db: Session = Depends(get_db),
+):
+    """创建用户并指定角色（仅管理员）
+
+    特权角色（auditor / admin）只能从这里产生：注册接口一律创建 viewer，
+    否则任何人都能自助提权。
+    """
+    user_repo = UserRepository(db)
+
+    if user_repo.get_by_username(user_data.username):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": 40002, "message": "用户名已存在"},
+        )
+
+    if user_repo.get_by_email(user_data.email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": 40003, "message": "邮箱已被注册"},
+        )
+
+    return user_repo.create(
+        username=user_data.username,
+        email=user_data.email,
+        hashed_password=get_password_hash(user_data.password),
+        full_name=user_data.full_name,
+        role=user_data.role,
+    )
 
 
 @router.delete("/users/{user_id}")

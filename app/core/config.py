@@ -76,6 +76,15 @@ class Settings:
     CHROMA_COLLECTION_NAME: str = "clauses"
     CHROMA_DATA_DIR: Path = field(default=None)
     CHROMA_CACHE_DIR: Path = field(default=None)
+    # 是否插入示例条文（仅供开箱试用）。生产环境一律不插入：示例条文会与
+    # 真实规范一起参与检索、污染审核依据，并经由数据生成流入训练集。
+    SEED_DEMO_DATA: bool = True
+    # 嵌入模型。ChromaDB 默认的 all-MiniLM-L6-v2 是英文模型，中文只能按子词
+    # 匹配，检索质量明显偏弱，而本库条文全部是中文。
+    # 注意：换模型会改变向量维度，必须重建集合后重新灌库
+    # （见 scripts/ingest_gb_corpus.py --reset）。
+    EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
+    EMBEDDING_DEVICE: str = "cpu"
 
     # === API配置 ===
     API_V1_PREFIX: str = "/api/v1"
@@ -159,14 +168,27 @@ class Settings:
             db_path = self.DATA_DIR / "buildsentry.db"
             self.DATABASE_URL = f"sqlite:///{db_path}"
 
-        # 向量数据库目录
+        # 向量数据库目录。支持从环境变量覆盖：测试必须把向量库指到临时目录，
+        # 否则跑一次 pytest 就会往真实的 data/chroma_data 里写示例条文。
         if self.CHROMA_DATA_DIR is None:
-            self.CHROMA_DATA_DIR = self.DATA_DIR / "chroma_data"
+            self.CHROMA_DATA_DIR = Path(
+                os.getenv("CHROMA_DATA_DIR") or self.DATA_DIR / "chroma_data"
+            )
         if self.CHROMA_CACHE_DIR is None:
-            self.CHROMA_CACHE_DIR = self.DATA_DIR / "chroma_cache"
+            self.CHROMA_CACHE_DIR = Path(
+                os.getenv("CHROMA_CACHE_DIR") or self.DATA_DIR / "chroma_cache"
+            )
 
         self.CHROMA_DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.CHROMA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        # 嵌入模型（此前未读取环境变量，换模型只能改代码）
+        self.EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", self.EMBEDDING_MODEL)
+        self.EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", self.EMBEDDING_DEVICE)
+
+        seed_env = os.getenv("SEED_DEMO_DATA")
+        if seed_env is not None:
+            self.SEED_DEMO_DATA = seed_env.strip().lower() in ("1", "true", "yes", "on")
 
         # CORS配置
         cors_env = os.getenv("CORS_ORIGINS")
